@@ -5,11 +5,20 @@ Display a rolling graph of Task CPU usage inside an ESP32
 
 <img width="757" height="471" alt="image" src="https://github.com/user-attachments/assets/1584f631-f67e-4046-9ba9-c6e75f259b0d" />
 
-
+### Initial Mention
 https://www.reddit.com/r/esp32/comments/1oeq3v6/whats_happening_inside_my_esp32/
 
 ---
-Good stuff not included
+### Get Started
+- download the .ino and the .h
+- edit your ssid and wifi into the .ino file
+- install on esp32
+- goto you ip address with port 81, like 192.168.1.111:81
+- then add your own code, and delete the lines that produce the fake load on core 0, core 1, and inside the loop
+
+---
+### Other info
+Good stuff not added yet
 - killing tasks
 - changing priorities
   
