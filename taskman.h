@@ -146,8 +146,8 @@ void BusyTask1(void* pv) {
     uint32_t start = millis();
     while ((millis() - start) < (runSecs * 1000UL)) {
       int j = 0;
-      for ( volatile int i = 0; i < 80000; i++) {
-        j = j + 1;               // compiler deletes this without volatile for some reason
+      for ( int i = 0; i < 200000; i++) {
+        j = (j + 1) * -1;               // compiler shouldnt delete this
       }
       if (j < 0) Serial.println("Busy1!");
       vTaskDelay(1);  // yield to other tasks
@@ -424,4 +424,5 @@ void taskman_fake_loop_load() {
   if (j < 0) Serial.println("busyloop!");
   delay(1);
 }
+
 
