@@ -39,7 +39,7 @@ Your ip address, and PORT 81
 #include <Arduino.h>
 #include <WiFi.h>
 #include "esp_http_server.h"  
-#include <ArduinoOTA.h>
+//#include <ArduinoOTA.h>
 
 #include "taskman.h"       //  <--- the important bit
 
@@ -55,8 +55,8 @@ void setup() {
   }
   Serial.println("\nConnected! IP: " + WiFi.localIP().toString());
 
-  ArduinoOTA.setHostname("taskman");  // just for convienience in testing
-  ArduinoOTA.begin();                 // just for convienience in testing
+  //ArduinoOTA.setHostname("taskman");  // just for convienience in testing
+  //ArduinoOTA.begin();                 // just for convienience in testing
 
   taskman_setup();    //  <--- the important bit
 
@@ -65,8 +65,9 @@ void setup() {
 
 void loop() {
 
-  ArduinoOTA.handle();               // just for convienience in testing
+  //ArduinoOTA.handle();               // just for convienience in testing
 
   taskman_fake_loop_load();          // remove for actual use
 
 }
+
