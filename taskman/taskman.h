@@ -271,11 +271,6 @@ async function updateChart() {
     createChart(json);
     return;
   }
-    // Save which datasets are hidden
-  const hiddenMap = {};
-  chart.data.datasets.forEach((d, i) => {
-    hiddenMap[d.label] = chart.getDatasetMeta(i).hidden;
-  });
 
   const res = await fetch('/dataCurrent');
   const json = await res.json();
@@ -306,14 +301,6 @@ async function updateChart() {
   // shift labels too
   chart.data.labels.push(chart.data.labels.length);
   if (chart.data.labels.length > sampleCount) chart.data.labels.shift();
-
-  // Restore hidden state
-  chart.data.datasets.forEach((d, i) => {
-    const meta = chart.getDatasetMeta(i);
-    if (hiddenMap.hasOwnProperty(d.label)) {
-      meta.hidden = hiddenMap[d.label];
-    }
-  });
 
 // Keep x-axis labels aligned: -n … 0
 chart.data.labels = Array.from({ length: sampleCount }, (_, i) => i - sampleCount + 1);
@@ -424,5 +411,6 @@ void taskman_fake_loop_load() {
   if (j < 0) Serial.println("busyloop!");
   delay(1);
 }
+
 
 
