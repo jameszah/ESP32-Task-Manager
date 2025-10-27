@@ -38,7 +38,7 @@ Your ip address, and PORT 81
 #include <Arduino.h>
 #include <WiFi.h>
 #include "esp_http_server.h"
-#include <ArduinoOTA.h>
+//#include <ArduinoOTA.h>
 
 #define SAMPLE_RATE_HZ 1
 #define SAMPLE_INTERVAL (1000 / SAMPLE_RATE_HZ)
@@ -127,7 +127,7 @@ void cpuMonitorTask(void* param) {
 
       //Serial.printf("%s: %.2f%%\n", t->pcTaskName, usage);
 
-      if (usage > 1.0f) tasks[idx].over2 = true;
+      if (usage > 2.0f) tasks[idx].over2 = true;
     }
 
     vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
@@ -201,7 +201,7 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
   <canvas id="cpuChart" width="900" height="400"></canvas>
   <p>- Click names to remove/restore lines<br>
      - Hover over line to find line name and value<br>
-     - Refresh page to get full 100 seconds on data from esp32, otherwise getting 1 second updates<br>
+     - Refresh page to get full 100 seconds of data from esp32, otherwise getting 1 second updates<br>
      <a href="https://github.com/jameszah/ESP32-Task-Manager" target="_blank">Source Code here: https://github.com/jameszah/ESP32-Task-Manager</a>
   </p>
   <script>
@@ -424,3 +424,4 @@ void taskman_fake_loop_load() {
   if (j < 0) Serial.println("busyloop!");
   delay(1);
 }
+
