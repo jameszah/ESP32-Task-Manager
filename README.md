@@ -45,8 +45,7 @@ http://192.168.0.152:81/dataInfo
     "prio": 0,
     "stackHW": 464,
     "state": 1
-
-  } ... etc ...
+ } ... etc ...
   "Tmr Svc": {
     "core": 2147483647,
     "prio": 1,
