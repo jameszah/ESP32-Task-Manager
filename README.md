@@ -19,6 +19,19 @@ https://www.reddit.com/r/esp32/comments/1oeq3v6/whats_happening_inside_my_esp32/
 - install on esp32
 - goto your ip address with port 81, like 192.168.1.111:81
 - then add your own code, and delete the lines that produce the fake load on core 0, core 1, and inside the loop
+---
+### Add to an existing project
+Your own code needs wifi, and these two lines:
+
+```
+#include "taskman.h"       //  <--- the important bit
+
+void setup(){
+  taskman_setup();         //  <--- the important bit
+}
+```
+And then access the taskmanager display with 192.168.1.111:81 
+Your ip address, and PORT 81
 
 ---
 ### Other info
