@@ -29,7 +29,7 @@ Good stuff not added yet
 ### Endpoints
 The endpoints are below - the esp32 keeps track of 100 points, and will deliver that entire series for every task that every exceeded 2% of its core, or for the current data you can just get the last second snapshot of every 2% plus task.  The data collector only runs once per second, so 2 fetchs in a second will give you the same data. 
 
-http://192.168.0.152:81/dataInfo
+http://192.168.1.111:81/dataInfo
 
 {
   "CPU_Monitor": {
