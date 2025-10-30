@@ -16,6 +16,8 @@
   - Initial release
   Ver 4.5 - Oct 27
   - few fixes and more info
+  Ver 4.7 - Oct 30
+  - business with multi-core tasks
 
 More info:
 
@@ -40,12 +42,10 @@ Your ip address, and PORT 81
 #include <Arduino.h>
 #include <WiFi.h>
 #include "esp_http_server.h"
-#include <ArduinoOTA.h>
 
 #define SAMPLE_RATE_HZ 1
 #define SAMPLE_INTERVAL (1000 / SAMPLE_RATE_HZ)
 #define SAMPLE_COUNT 100
-#define MAX_TASKS 20
 
 httpd_handle_t taskman_server = NULL;
 
@@ -67,92 +67,106 @@ struct TaskSample {
 
   uint32_t prevRunTime = 0;
   bool over2 = false;
+
+    // 🆕 Track how long since we last saw it alive
+  int missingCount = 0;
+
 };
 
-// ─── GLOBALS ─────────────────────────────────────────────
-TaskSample* tasks = nullptr;
+constexpr int MAX_TASKS = 30;
+TaskSample tasks[MAX_TASKS];
 TaskStatus_t* taskStatusArray = nullptr;
-int taskCount = 0;
 uint32_t prevTotalRunTime = 0;
+int maxtaskCount = 0;
 
-// ─── CPU MONITOR TASK ───────────────────────────────────
 void cpuMonitorTask(void* param) {
-  Serial.println("cpuMonitor started ...");
-  for (;;) {
-    int numTasks = uxTaskGetNumberOfTasks();
+    Serial.println("cpuMonitor started ...");
 
-    // Allocate or resize if needed
-    if (tasks == nullptr || numTasks != taskCount) {
-      if (tasks) delete[] tasks;
-      if (taskStatusArray) free(taskStatusArray);
-
-      taskCount = numTasks;
-      tasks = new TaskSample[taskCount];
-      taskStatusArray = (TaskStatus_t*)malloc(sizeof(TaskStatus_t) * taskCount);
-    }
-
-    uint32_t totalRunTime;
-    UBaseType_t numReturned = uxTaskGetSystemState(taskStatusArray, taskCount, &totalRunTime);
-    if (numReturned == 0 || totalRunTime == prevTotalRunTime) {
-      vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
-      continue;
-    }
-
-    uint32_t deltaTotal = totalRunTime - prevTotalRunTime;
-    prevTotalRunTime = totalRunTime;
-
-    for (uint32_t i = 0; i < numReturned; i++) {
-      TaskStatus_t* t = &taskStatusArray[i];
-      if (!t->pcTaskName) continue;
-
-      // Find or create entry
-      int idx = -1;
-      for (int j = 0; j < taskCount; j++) {
-        if (tasks[j].active && tasks[j].name == t->pcTaskName) {
-          idx = j;
-          break;
+    // Allocate system state array once
+    if (!taskStatusArray) {
+        taskStatusArray = (TaskStatus_t*)malloc(sizeof(TaskStatus_t) * MAX_TASKS);
+        if (!taskStatusArray) {
+            Serial.println("Failed to allocate taskStatusArray");
+            vTaskDelete(nullptr);
+            return;
         }
-      }
-      if (idx == -1) {
-        for (int j = 0; j < taskCount; j++) {
-          if (!tasks[j].active) {
-            idx = j;
-            tasks[j].name = t->pcTaskName;
-            //Serial.println(tasks[j].name);
-            tasks[j].active = true;
-            tasks[j].prevRunTime = t->ulRunTimeCounter;
-            memset(tasks[j].usage, 0, sizeof(tasks[j].usage));
-            break;
-          }
-        }
-      }
-      if (idx == -1) continue;
-
-      uint32_t deltaTask = (t->ulRunTimeCounter >= tasks[idx].prevRunTime)
-                             ? t->ulRunTimeCounter - tasks[idx].prevRunTime
-                             : 0;
-      tasks[idx].prevRunTime = t->ulRunTimeCounter;
-
-      float usage = (deltaTotal > 0) ? (float)deltaTask / deltaTotal * 100.0f : 0;
-      tasks[idx].usage[tasks[idx].index] = usage;
-      tasks[idx].index = (tasks[idx].index + 1) % SAMPLE_COUNT;
-
-      //Serial.printf("%s: %.2f%%\n", t->pcTaskName, usage);
-
-      // copy system state info
-      tasks[idx].taskNumber     = t->xTaskNumber;
-      tasks[idx].state          = t->eCurrentState;
-      tasks[idx].currentPrio    = t->uxCurrentPriority;
-      tasks[idx].basePrio       = t->uxBasePriority;
-      tasks[idx].runTime        = t->ulRunTimeCounter;
-      tasks[idx].stackHighWater = t->usStackHighWaterMark;
-      tasks[idx].core           = t->xCoreID;
-
-      if (usage > 1.0f) tasks[idx].over2 = true;
     }
 
-    vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
-  }
+    for (;;) {
+        uint32_t totalRunTime;
+        UBaseType_t numReturned = uxTaskGetSystemState(taskStatusArray, MAX_TASKS, &totalRunTime);
+
+        if (numReturned == 0 || totalRunTime == prevTotalRunTime) {
+            vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
+            continue;
+        }
+
+        uint32_t deltaTotal = totalRunTime - prevTotalRunTime;
+        prevTotalRunTime = totalRunTime;
+
+        // Mark all tasks as unseen this cycle
+        bool seen[MAX_TASKS] = {false};
+
+        // ── Process current system tasks ───────────────────────────────
+        for (uint32_t i = 0; i < numReturned; i++) {
+            TaskStatus_t* t = &taskStatusArray[i];
+            if (!t->pcTaskName) continue;
+
+            // Find existing task
+            int idx = -1;
+            for (int j = 0; j < maxtaskCount; j++) {
+                if (tasks[j].name == t->pcTaskName) {
+                    idx = j;
+                    break;
+                }
+            }
+
+            // If not found, add new one (if space)
+            if (idx == -1 && maxtaskCount < MAX_TASKS) {
+                idx = maxtaskCount++;
+                tasks[idx].name = t->pcTaskName;
+                tasks[idx].active = true;
+                tasks[idx].prevRunTime = t->ulRunTimeCounter;
+                memset(tasks[idx].usage, 0, sizeof(tasks[idx].usage));
+                //Serial.printf("New task observed: %s\n", t->pcTaskName);
+            }
+
+            if (idx == -1) continue;  // no free slot available
+            seen[idx] = true;
+
+            // Skip if runtime goes backward
+            if (t->ulRunTimeCounter < tasks[idx].prevRunTime) continue;
+
+            uint32_t deltaTask = t->ulRunTimeCounter - tasks[idx].prevRunTime;
+            tasks[idx].prevRunTime = t->ulRunTimeCounter;
+
+            float usage = (deltaTotal > 0) ? (float)deltaTask / deltaTotal * 100.0f : 0.0f;
+            tasks[idx].usage[tasks[idx].index] = usage;
+            tasks[idx].index = (tasks[idx].index + 1) % SAMPLE_COUNT;
+
+            // Update system info
+            tasks[idx].taskNumber     = t->xTaskNumber;
+            tasks[idx].state          = t->eCurrentState;
+            tasks[idx].currentPrio    = t->uxCurrentPriority;
+            tasks[idx].basePrio       = t->uxBasePriority;
+            tasks[idx].runTime        = t->ulRunTimeCounter;
+            tasks[idx].stackHighWater = t->usStackHighWaterMark;
+            tasks[idx].core           = t->xCoreID;
+            //tasks[idx].over2          = (usage > 2.0f);
+            if (usage > 2.0f) tasks[idx].over2 = true;
+        }
+
+        // ── Roll zeros for missing tasks ───────────────────────────────
+        for (int j = 0; j < maxtaskCount; j++) {
+            if (!seen[j]) {
+                // Task not observed this round → roll in zero usage
+                tasks[j].usage[tasks[j].index] = 0.0f;
+                tasks[j].index = (tasks[j].index + 1) % SAMPLE_COUNT;
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
+    }
 }
 
 void FakeLoad1(void* pv) {
@@ -252,7 +266,7 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
   </style>
   </head>
 <body>
-<h2>ESP32 Task Manager 4.5 </h2>
+<h2>ESP32 Task Manager </h2>
   <canvas id="cpuChart" width="900" height="400"></canvas>
 <div style="
   background: #fff;
@@ -273,7 +287,7 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
   <p style="margin: 0;">
     <a href="https://github.com/jameszah/ESP32-Task-Manager" target="_blank" 
        style="color:#0078d4; text-decoration:none;">
-       Source Code on GitHub: <b>ESP32-Task-Manager</b>
+       Source Code on GitHub: <b>ESP32-Task-Manager 4.7</b>
     </a>
   </p>
 </div>
@@ -453,8 +467,8 @@ esp_err_t taskman_handleDataInfo(httpd_req_t* req) {
   String json = "{";
   bool firstTask = true;
 
-  for (int i = 0; i < taskCount; i++) {
-    if (!tasks[i].active) continue;
+  for (int i = 0; i < maxtaskCount; i++) {
+    //if (!tasks[i].active) continue;
     if (!firstTask) json += ",";
     firstTask = false;
 
@@ -478,8 +492,8 @@ esp_err_t taskman_handleData(httpd_req_t* req) {
   String json = "{";
 
   bool firstTask = true;
-  for (int i = 0; i < taskCount; i++) {
-    if (!tasks[i].active) continue;
+  for (int i = 0; i < maxtaskCount; i++) {
+    //if (!tasks[i].active) continue;
     if (!tasks[i].over2) continue;
 
     if (!firstTask) json += ",";
@@ -506,8 +520,8 @@ esp_err_t taskman_handleDataCurrent(httpd_req_t* req) {
   String json = "{";
   bool firstTask = true;
 
-  for (int i = 0; i < taskCount; i++) {
-    if (!tasks[i].active) continue;
+  for (int i = 0; i < maxtaskCount; i++) {
+    //if (!tasks[i].active) continue;
     if (!tasks[i].over2) continue;
 
     if (!firstTask) json += ",";
