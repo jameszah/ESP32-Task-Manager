@@ -17,7 +17,10 @@
   Ver 4.5 - Oct 27
   - few fixes and more info
   Ver 4.7 - Oct 30
-  - business with multi-core tasks
+  - business with multi-core tasks - bug in uxTaskGetSystemState
+  - shut off graph when not visible
+  Ver 4.9 - Oct 31
+  - fix 32bit rollover on the timers
 
 More info:
 
@@ -56,7 +59,7 @@ struct TaskSample {
   int index = 0;
   bool active = false;
 
-    // from FreeRTOS TaskStatus_t
+  // from FreeRTOS TaskStatus_t
   UBaseType_t taskNumber = 0;
   eTaskState state;
   UBaseType_t currentPrio = 0;
@@ -68,9 +71,8 @@ struct TaskSample {
   uint32_t prevRunTime = 0;
   bool over2 = false;
 
-    // 🆕 Track how long since we last saw it alive
+  // 🆕 Track how long since we last saw it alive
   int missingCount = 0;
-
 };
 
 constexpr int MAX_TASKS = 30;
@@ -80,93 +82,123 @@ uint32_t prevTotalRunTime = 0;
 int maxtaskCount = 0;
 
 void cpuMonitorTask(void* param) {
-    Serial.println("cpuMonitor started ...");
+  Serial.println("cpuMonitor started ...");
 
-    // Allocate system state array once
+  // Allocate system state array once
+  if (!taskStatusArray) {
+    taskStatusArray = (TaskStatus_t*)malloc(sizeof(TaskStatus_t) * MAX_TASKS);
     if (!taskStatusArray) {
-        taskStatusArray = (TaskStatus_t*)malloc(sizeof(TaskStatus_t) * MAX_TASKS);
-        if (!taskStatusArray) {
-            Serial.println("Failed to allocate taskStatusArray");
-            vTaskDelete(nullptr);
-            return;
-        }
+      Serial.println("Failed to allocate taskStatusArray");
+      vTaskDelete(nullptr);
+      return;
+    }
+  }
+
+  for (;;) {
+    uint32_t totalRunTime;
+    UBaseType_t numReturned = uxTaskGetSystemState(taskStatusArray, MAX_TASKS, &totalRunTime);
+
+    if (numReturned == 0 || totalRunTime == prevTotalRunTime) {
+      vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
+      continue;
     }
 
-    for (;;) {
-        uint32_t totalRunTime;
-        UBaseType_t numReturned = uxTaskGetSystemState(taskStatusArray, MAX_TASKS, &totalRunTime);
+    uint32_t deltaTotal = totalRunTime - prevTotalRunTime;
+    prevTotalRunTime = totalRunTime;
 
-        if (numReturned == 0 || totalRunTime == prevTotalRunTime) {
-            vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
-            continue;
+    // Mark all tasks as unseen this cycle
+    bool seen[MAX_TASKS] = { false };
+
+    // ── Process current system tasks ───────────────────────────────
+    for (uint32_t i = 0; i < numReturned; i++) {
+      TaskStatus_t* t = &taskStatusArray[i];
+      if (!t->pcTaskName) continue;
+
+      // Find existing task
+      int idx = -1;
+      for (int j = 0; j < maxtaskCount; j++) {
+        if (tasks[j].name == t->pcTaskName) {
+          idx = j;
+          break;
         }
+      }
 
-        uint32_t deltaTotal = totalRunTime - prevTotalRunTime;
-        prevTotalRunTime = totalRunTime;
+      // If not found, add new one (if space)
+      if (idx == -1 && maxtaskCount < MAX_TASKS) {
+        idx = maxtaskCount++;
+        tasks[idx].name = t->pcTaskName;
+        tasks[idx].active = true;
+        tasks[idx].prevRunTime = t->ulRunTimeCounter;
+        memset(tasks[idx].usage, 0, sizeof(tasks[idx].usage));
+        //Serial.printf("New task observed: %s\n", t->pcTaskName);
+      }
 
-        // Mark all tasks as unseen this cycle
-        bool seen[MAX_TASKS] = {false};
+      if (idx == -1) continue;  // no free slot available
+      seen[idx] = true;
 
-        // ── Process current system tasks ───────────────────────────────
-        for (uint32_t i = 0; i < numReturned; i++) {
-            TaskStatus_t* t = &taskStatusArray[i];
-            if (!t->pcTaskName) continue;
-
-            // Find existing task
-            int idx = -1;
-            for (int j = 0; j < maxtaskCount; j++) {
-                if (tasks[j].name == t->pcTaskName) {
-                    idx = j;
-                    break;
-                }
-            }
-
-            // If not found, add new one (if space)
-            if (idx == -1 && maxtaskCount < MAX_TASKS) {
-                idx = maxtaskCount++;
-                tasks[idx].name = t->pcTaskName;
-                tasks[idx].active = true;
-                tasks[idx].prevRunTime = t->ulRunTimeCounter;
-                memset(tasks[idx].usage, 0, sizeof(tasks[idx].usage));
-                //Serial.printf("New task observed: %s\n", t->pcTaskName);
-            }
-
-            if (idx == -1) continue;  // no free slot available
-            seen[idx] = true;
-
+      /*
             // Skip if runtime goes backward
-            if (t->ulRunTimeCounter < tasks[idx].prevRunTime) continue;
+            if (t->ulRunTimeCounter < tasks[idx].prevRunTime) {
+              if (tasks[idx].prevRunTime - t->ulRunTimeCounter > 0x0FFFFFFF){
 
-            uint32_t deltaTask = t->ulRunTimeCounter - tasks[idx].prevRunTime;
-            tasks[idx].prevRunTime = t->ulRunTimeCounter;
-
-            float usage = (deltaTotal > 0) ? (float)deltaTask / deltaTotal * 100.0f : 0.0f;
-            tasks[idx].usage[tasks[idx].index] = usage;
-            tasks[idx].index = (tasks[idx].index + 1) % SAMPLE_COUNT;
-
-            // Update system info
-            tasks[idx].taskNumber     = t->xTaskNumber;
-            tasks[idx].state          = t->eCurrentState;
-            tasks[idx].currentPrio    = t->uxCurrentPriority;
-            tasks[idx].basePrio       = t->uxBasePriority;
-            tasks[idx].runTime        = t->ulRunTimeCounter;
-            tasks[idx].stackHighWater = t->usStackHighWaterMark;
-            tasks[idx].core           = t->xCoreID;
-            //tasks[idx].over2          = (usage > 2.0f);
-            if (usage > 2.0f) tasks[idx].over2 = true;
-        }
-
-        // ── Roll zeros for missing tasks ───────────────────────────────
-        for (int j = 0; j < maxtaskCount; j++) {
-            if (!seen[j]) {
-                // Task not observed this round → roll in zero usage
-                tasks[j].usage[tasks[j].index] = 0.0f;
-                tasks[j].index = (tasks[j].index + 1) % SAMPLE_COUNT;
+                // do nothing - this is a ulRunTimeCounter rolled over the 32 bit number
+                
+              } else continue; // this is faulty data reported in systemstate
             }
-        }
+      */
 
-        vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
+      uint32_t curr = t->ulRunTimeCounter;
+      uint32_t prev = tasks[idx].prevRunTime;
+
+      // If runtime goes backward
+      if (curr < prev) {
+        uint32_t diff = prev - curr;
+
+        if (diff > 0x0FFFFFFF) {
+          // ✅ Valid 32-bit counter rollover (huge backward jump)
+          //    Let unsigned math handle it normally below
+        } else {
+          // 🚫 Small backward jump = bogus data from other core or race condition
+          continue;
+        }
+      }
+
+      // Compute delta normally — unsigned arithmetic handles rollover correctly
+      uint32_t delta = curr - prev;
+
+      // 🚫 Filter out absurdly large deltas (corrupted data)
+      if (delta > 0x0FFFFFFF) continue;
+
+      uint32_t deltaTask = delta; // t->ulRunTimeCounter - tasks[idx].prevRunTime;
+      tasks[idx].prevRunTime = curr; // t->ulRunTimeCounter;
+
+      float usage = (deltaTotal > 0) ? (float)deltaTask / deltaTotal * 100.0f : 0.0f;
+      tasks[idx].usage[tasks[idx].index] = usage;
+      tasks[idx].index = (tasks[idx].index + 1) % SAMPLE_COUNT;
+
+      // Update system info
+      tasks[idx].taskNumber = t->xTaskNumber;
+      tasks[idx].state = t->eCurrentState;
+      tasks[idx].currentPrio = t->uxCurrentPriority;
+      tasks[idx].basePrio = t->uxBasePriority;
+      tasks[idx].runTime = t->ulRunTimeCounter;
+      tasks[idx].stackHighWater = t->usStackHighWaterMark;
+      tasks[idx].core = t->xCoreID;
+      //tasks[idx].over2          = (usage > 2.0f);
+      if (usage > 2.0f) tasks[idx].over2 = true;
     }
+
+    // ── Roll zeros for missing tasks ───────────────────────────────
+    for (int j = 0; j < maxtaskCount; j++) {
+      if (!seen[j]) {
+        // Task not observed this round → roll in zero usage
+        tasks[j].usage[tasks[j].index] = 0.0f;
+        tasks[j].index = (tasks[j].index + 1) % SAMPLE_COUNT;
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
+  }
 }
 
 void FakeLoad1(void* pv) {
@@ -181,8 +213,8 @@ void FakeLoad1(void* pv) {
     uint32_t start = millis();
     while ((millis() - start) < (runSecs * 1000UL)) {
       int j = 0;
-      for ( int i = 0; i < 200000; i++) {
-        j =  (j + 1) * -1;               // compiler deletes this without volatile for some reason
+      for (int i = 0; i < 200000; i++) {
+        j = (j + 1) * -1;  // compiler deletes this without volatile for some reason
       }
       if (j < 0) Serial.println("Fake Load 1!");
       vTaskDelay(1);  // yield to other tasks
@@ -196,10 +228,10 @@ void FakeLoad1(void* pv) {
 
 
 void FakeLoad0(void* pv) {
-  const uint32_t cycleMs = 30000UL;   // full sine wave cycle = 30 seconds
-  const float minLoad = 0.05;         // 5% minimum load
-  const float maxLoad = 0.50;         // 50% maximum load
-  const uint32_t stepMs = 200;        // time step resolution
+  const uint32_t cycleMs = 30000UL;  // full sine wave cycle = 30 seconds
+  const float minLoad = 0.05;        // 5% minimum load
+  const float maxLoad = 0.50;        // 50% maximum load
+  const uint32_t stepMs = 200;       // time step resolution
 
   Serial.printf("FakeLoad0: Core %d, sine-wave fake load (%.0f–%.0f%%, %lus cycle)\n",
                 xPortGetCoreID(), minLoad * 100, maxLoad * 100, cycleMs / 1000);
@@ -227,7 +259,6 @@ void FakeLoad0(void* pv) {
 
     // --- Idle for remainder ---
     vTaskDelay(pdMS_TO_TICKS(idleMs));
-
   }
 }
 
@@ -287,11 +318,11 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
   <p style="margin: 0;">
     <a href="https://github.com/jameszah/ESP32-Task-Manager" target="_blank" 
        style="color:#0078d4; text-decoration:none;">
-       Source Code on GitHub: <b>ESP32-Task-Manager 4.7</b>
+       Source Code on GitHub: <b>ESP32-Task-Manager 4.9</b>
     </a>
   </p>
 </div>
-<h3>Task Info - updates every 10 sec</h3>
+<h3>Task Info - updates every 30 sec</h3>
 <table id="taskTable" border="1" style="margin-top:10px; border-collapse:collapse; width:100%; background:white;">
   <thead>
     <tr style="background:#eee;">
@@ -310,39 +341,29 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
 let chart;
 let sampleCount = 100; // number of samples to keep on screen  SAMPLE_COUNT !!!!
 
-function createChart(initialJson) {
-  const ctx = document.getElementById('cpuChart').getContext('2d');
 
-  const datasets = Object.entries(initialJson).map(([name, data], i) => ({
-    label: name,
-    data: data,
-    borderColor: `hsl(${i * 70 % 360}, 70%, 50%)`,
-    borderWidth: 1.5,
-    fill: false,
-    tension: 0.4,
-    pointRadius: 0,
-    pointHoverRadius: 0
-  }));
+function createChart() {
+  const ctx = document.getElementById('cpuChart').getContext('2d');
 
   chart = new Chart(ctx, {
     type: 'line',
     data: {
       labels: Array.from({ length: sampleCount }, (_, i) => i - sampleCount + 1),
-      datasets: datasets
+      datasets: [] // start empty — we’ll fill it later
     },
     options: {
       animation: false,
       responsive: true,
-scales: {
-  x: {
-    title: { display: true, text: 'Seconds Ago' }
-  },
-  y: {
-    beginAtZero: true,
-    max: 100,
-    title: { display: true, text: 'CPU %' }
-  }
-},
+      scales: {
+        x: {
+          title: { display: true, text: 'Seconds Ago' }
+        },
+        y: {
+          beginAtZero: true,
+          max: 100,
+          title: { display: true, text: 'CPU %' }
+        }
+      },
       plugins: {
         legend: {
           position: 'bottom',
@@ -353,31 +374,89 @@ scales: {
   });
 }
 
-// ─── INITIAL LOAD ─────────────────────────────────────────────
+async function updateChartData() {
+  try {
+    const res = await fetch('/data');
+    const json = await res.json();
 
-async function init() {
-  const res = await fetch('/data');
-  const json = await res.json();
-  createChart(json);
+    if (!chart) return; // chart not ready yet
 
-  // Load table right away
-  updateTable();
+    Object.entries(json).forEach(([name, data], i) => {
+      let dataset = chart.data.datasets.find(d => d.label === name);
 
-  // Keep updating graph and table
-  setInterval(updateChart, 1000);
-  setInterval(updateTable, 10000);
+      // Add new dataset if not found
+      if (!dataset) {
+        dataset = {
+          label: name,
+          data: data,
+          borderColor: `hsl(${i * 70 % 360}, 70%, 50%)`,
+          borderWidth: 1.5,
+          fill: false,
+          tension: 0.4,
+          pointRadius: 0,
+          pointHoverRadius: 0
+        };
+        chart.data.datasets.push(dataset);
+      } else {
+        dataset.data = data;
+      }
+    });
+
+    chart.update('none'); // quick refresh, no animation
+  } catch (err) {
+    console.error('updateChartData failed:', err);
+  }
 }
 
 
+// ─── INITIAL LOAD ─────────────────────────────────────────────
+
+let charttimer;
+let tabletimer;
+
+// Main startup function
+async function startWork() {
+  console.log("Starting work (tab visible)");
+
+  updateChartData();
+
+  // Load table immediately
+  updateTable();
+
+  // Start periodic updates
+  charttimer = setInterval(updateChart, 1000);
+  tabletimer = setInterval(updateTable, 30000);
+}
+
+function stopWork() {
+  console.log("Stopping work (tab hidden)");
+  clearInterval(charttimer);
+  clearInterval(tabletimer);
+}
+
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "hidden") {
+    stopWork();
+  } else {
+    await startWork(); // re-fetch fresh data when returning
+  }
+});
+
+function init(){
+  createChart();
+  startWork();
+}
+
+// Start immediately when page first loads
+window.addEventListener("load", init);
 
 // ─── UPDATE WITH NEW SAMPLE ───────────────────────────────────
 async function updateChart() {
 
     // If chart doesn't exist yet, load full dataset once
   if (!chart) {
-    const res = await fetch('/data');
-    const json = await res.json();
-    createChart(json);
+    createChart();
+    updateChartData();
     return;
   }
 
@@ -451,7 +530,7 @@ chart.data.labels = Array.from({ length: sampleCount }, (_, i) => i - sampleCoun
 }
 
 
-window.addEventListener('load', init);
+//window.addEventListener('load', init);
 
   </script>
 </body>
@@ -540,9 +619,9 @@ esp_err_t taskman_handleDataCurrent(httpd_req_t* req) {
 
 void taskman_setup() {
   int start_free = ESP.getFreeHeap();
-  
+
   Serial.println("\nhttps://github.com/jameszah/ESP32-Task-Manager\n");
-  
+
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 81;   // 80;
   config.ctrl_port = 32770;  // 32769;   // control port
@@ -552,7 +631,7 @@ void taskman_setup() {
     httpd_uri_t uri_data = { .uri = "/data", .method = HTTP_GET, .handler = taskman_handleData };
     httpd_uri_t uri_dataInfo = { .uri = "/dataInfo", .method = HTTP_GET, .handler = taskman_handleDataInfo };
     httpd_uri_t uri_dataCurrent = { .uri = "/dataCurrent", .method = HTTP_GET, .handler = taskman_handleDataCurrent };
-    
+
 
     httpd_register_uri_handler(taskman_server, &uri_root);
     httpd_register_uri_handler(taskman_server, &uri_dataInfo);
@@ -561,14 +640,14 @@ void taskman_setup() {
   }
   xTaskCreatePinnedToCore(cpuMonitorTask, "CPU_Monitor", 1250, nullptr, 7, nullptr, 0);
   vTaskDelay(pdMS_TO_TICKS(3));
-  Serial.printf("Taskman setup complete, used %d bytes of ram, current free %d\n",start_free-ESP.getFreeHeap(), ESP.getFreeHeap());
+  Serial.printf("Taskman setup complete, used %d bytes of ram, current free %d\n", start_free - ESP.getFreeHeap(), ESP.getFreeHeap());
 }
 
 void taskman_setup_fake_load_tasks() {
   int start_free = ESP.getFreeHeap();
   xTaskCreatePinnedToCore(FakeLoad1, "FakeLoad1", 2000, nullptr, 1, nullptr, 1);
   xTaskCreatePinnedToCore(FakeLoad0, "FakeLoad0", 2500, nullptr, 1, nullptr, 0);
-  Serial.printf("Fake load tasks setup complete, used %d bytes of ram, current free %d\n",start_free-ESP.getFreeHeap(), ESP.getFreeHeap());
+  Serial.printf("Fake load tasks setup complete, used %d bytes of ram, current free %d\n", start_free - ESP.getFreeHeap(), ESP.getFreeHeap());
 }
 
 void taskman_fake_loop_load() {
@@ -577,5 +656,6 @@ void taskman_fake_loop_load() {
     j = j + 1;
   }
   if (j < 0) Serial.println("fake load loop!");
-  vTaskDelay(pdMS_TO_TICKS(1));;
+  vTaskDelay(pdMS_TO_TICKS(1));
+  ;
 }
