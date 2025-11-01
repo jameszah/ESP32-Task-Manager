@@ -21,6 +21,8 @@
   - shut off graph when not visible
   Ver 4.9 - Oct 31
   - fix 32bit rollover on the timers
+ Ver 5.0 - Nov 1
+ - put the filename of program in the title
 
 More info:
 
@@ -31,10 +33,11 @@ More info:
 /*
 Your own code needs wifi, and these two lines:
 
-#include "taskman.h"       //  <--- the important bit
+#define PROGRAM_NAME "replace with program name" //   <--- the important bit
+#include "taskman.h"                            //  <--- the important bit
 
 void setup(){
-  taskman_setup();         //  <--- the important bit
+  taskman_setup();                           //  <--- the important bit
 }
 
 And then access the taskmanager display with 192.168.1.111:81 
@@ -45,6 +48,10 @@ Your ip address, and PORT 81
 #include <Arduino.h>
 #include <WiFi.h>
 #include "esp_http_server.h"
+
+#ifndef PROGRAM_NAME
+  #define PROGRAM_NAME "replace with your name"
+#endif
 
 #define SAMPLE_RATE_HZ 1
 #define SAMPLE_INTERVAL (1000 / SAMPLE_RATE_HZ)
@@ -71,7 +78,7 @@ struct TaskSample {
   uint32_t prevRunTime = 0;
   bool over2 = false;
 
-  // 🆕 Track how long since we last saw it alive
+  //  Track how long since we last saw it alive
   int missingCount = 0;
 };
 
@@ -136,17 +143,6 @@ void cpuMonitorTask(void* param) {
       if (idx == -1) continue;  // no free slot available
       seen[idx] = true;
 
-      /*
-            // Skip if runtime goes backward
-            if (t->ulRunTimeCounter < tasks[idx].prevRunTime) {
-              if (tasks[idx].prevRunTime - t->ulRunTimeCounter > 0x0FFFFFFF){
-
-                // do nothing - this is a ulRunTimeCounter rolled over the 32 bit number
-                
-              } else continue; // this is faulty data reported in systemstate
-            }
-      */
-
       uint32_t curr = t->ulRunTimeCounter;
       uint32_t prev = tasks[idx].prevRunTime;
 
@@ -155,10 +151,10 @@ void cpuMonitorTask(void* param) {
         uint32_t diff = prev - curr;
 
         if (diff > 0x0FFFFFFF) {
-          // ✅ Valid 32-bit counter rollover (huge backward jump)
+          //  Valid 32-bit counter rollover (huge backward jump)
           //    Let unsigned math handle it normally below
         } else {
-          // 🚫 Small backward jump = bogus data from other core or race condition
+          //  Small backward jump = bogus data from other core or race condition
           continue;
         }
       }
@@ -166,7 +162,7 @@ void cpuMonitorTask(void* param) {
       // Compute delta normally — unsigned arithmetic handles rollover correctly
       uint32_t delta = curr - prev;
 
-      // 🚫 Filter out absurdly large deltas (corrupted data)
+      //  Filter out absurdly large deltas (corrupted data)
       if (delta > 0x0FFFFFFF) continue;
 
       uint32_t deltaTask = delta; // t->ulRunTimeCounter - tasks[idx].prevRunTime;
@@ -196,7 +192,6 @@ void cpuMonitorTask(void* param) {
         tasks[j].index = (tasks[j].index + 1) % SAMPLE_COUNT;
       }
     }
-
     vTaskDelay(pdMS_TO_TICKS(SAMPLE_INTERVAL));
   }
 }
@@ -225,7 +220,6 @@ void FakeLoad1(void* pv) {
     vTaskDelay(pdMS_TO_TICKS(idleMs));
   }
 }
-
 
 void FakeLoad0(void* pv) {
   const uint32_t cycleMs = 30000UL;  // full sine wave cycle = 30 seconds
@@ -262,12 +256,26 @@ void FakeLoad0(void* pv) {
   }
 }
 
+String getProgramName() {
+  String path = __FILE__;
+  int slash = path.lastIndexOf('/');
+  if (slash < 0) slash = path.lastIndexOf('\\'); // handle Windows
+  int dot = path.lastIndexOf('.');
+  if (dot < 0) dot = path.length();
+  return path.substring(slash + 1, dot);
+}
+
 esp_err_t taskman_handleRoot(httpd_req_t* req) {
+  //String progName = getProgramName();
+  String progName = PROGRAM_NAME;
+
   String html = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
-  <title>ESP32 Task Monitor</title>
+  <title>ESP32 Task Manager - )rawliteral";
+  html += progName;
+  html += R"rawliteral(</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   
   <style>
@@ -295,9 +303,11 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
       background: #eee;
     }
   </style>
-  </head>
+</head>
 <body>
-<h2>ESP32 Task Manager </h2>
+<h2>ESP32 Task Manager - )rawliteral";
+  html += progName;
+  html += R"rawliteral(</h2>
   <canvas id="cpuChart" width="900" height="400"></canvas>
 <div style="
   background: #fff;
@@ -318,7 +328,7 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
   <p style="margin: 0;">
     <a href="https://github.com/jameszah/ESP32-Task-Manager" target="_blank" 
        style="color:#0078d4; text-decoration:none;">
-       Source Code on GitHub: <b>ESP32-Task-Manager 4.9</b>
+       Source Code on GitHub: <b>ESP32-Task-Manager 5.0</b>
     </a>
   </p>
 </div>
@@ -336,39 +346,27 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
   <tbody></tbody>
 </table>
 
-  
-  <script>
+<script>
 let chart;
-let sampleCount = 100; // number of samples to keep on screen  SAMPLE_COUNT !!!!
-
+let sampleCount = 100; // number of samples to keep on screen
 
 function createChart() {
   const ctx = document.getElementById('cpuChart').getContext('2d');
-
   chart = new Chart(ctx, {
     type: 'line',
     data: {
       labels: Array.from({ length: sampleCount }, (_, i) => i - sampleCount + 1),
-      datasets: [] // start empty — we’ll fill it later
+      datasets: []
     },
     options: {
       animation: false,
       responsive: true,
       scales: {
-        x: {
-          title: { display: true, text: 'Seconds Ago' }
-        },
-        y: {
-          beginAtZero: true,
-          max: 100,
-          title: { display: true, text: 'CPU %' }
-        }
+        x: { title: { display: true, text: 'Seconds Ago' } },
+        y: { beginAtZero: true, max: 100, title: { display: true, text: 'CPU %' } }
       },
       plugins: {
-        legend: {
-          position: 'bottom',
-          labels: { boxWidth: 12 }
-        }
+        legend: { position: 'bottom', labels: { boxWidth: 12 } }
       }
     }
   });
@@ -378,15 +376,11 @@ async function updateChartData() {
   try {
     const res = await fetch('/data');
     const json = await res.json();
-
-    if (!chart) return; // chart not ready yet
-
+    if (!chart) return;
     Object.entries(json).forEach(([name, data], i) => {
-      let dataset = chart.data.datasets.find(d => d.label === name);
-
-      // Add new dataset if not found
-      if (!dataset) {
-        dataset = {
+      let ds = chart.data.datasets.find(d => d.label === name);
+      if (!ds) {
+        ds = {
           label: name,
           data: data,
           borderColor: `hsl(${i * 70 % 360}, 70%, 50%)`,
@@ -396,34 +390,24 @@ async function updateChartData() {
           pointRadius: 0,
           pointHoverRadius: 0
         };
-        chart.data.datasets.push(dataset);
+        chart.data.datasets.push(ds);
       } else {
-        dataset.data = data;
+        ds.data = data;
       }
     });
-
-    chart.update('none'); // quick refresh, no animation
+    chart.update('none');
   } catch (err) {
     console.error('updateChartData failed:', err);
   }
 }
 
-
-// ─── INITIAL LOAD ─────────────────────────────────────────────
-
 let charttimer;
 let tabletimer;
 
-// Main startup function
 async function startWork() {
   console.log("Starting work (tab visible)");
-
   updateChartData();
-
-  // Load table immediately
   updateTable();
-
-  // Start periodic updates
   charttimer = setInterval(updateChart, 1000);
   tabletimer = setInterval(updateTable, 30000);
 }
@@ -435,11 +419,8 @@ function stopWork() {
 }
 
 document.addEventListener("visibilitychange", async () => {
-  if (document.visibilityState === "hidden") {
-    stopWork();
-  } else {
-    await startWork(); // re-fetch fresh data when returning
-  }
+  if (document.visibilityState === "hidden") stopWork();
+  else await startWork();
 });
 
 function init(){
@@ -447,72 +428,43 @@ function init(){
   startWork();
 }
 
-// Start immediately when page first loads
 window.addEventListener("load", init);
 
-// ─── UPDATE WITH NEW SAMPLE ───────────────────────────────────
 async function updateChart() {
-
-    // If chart doesn't exist yet, load full dataset once
-  if (!chart) {
-    createChart();
-    updateChartData();
-    return;
-  }
-
+  if (!chart) { createChart(); updateChartData(); return; }
   const res = await fetch('/dataCurrent');
   const json = await res.json();
-
   if (!chart) return;
-
   for (const [name, value] of Object.entries(json)) {
     let ds = chart.data.datasets.find(d => d.label === name);
     if (!ds) {
-          // Task appeared for the first time — create a new dataset
-    ds = {
-      label: name,
-      data: Array(chart.data.labels.length - 1).fill(0), // fill history with 0
-      borderColor: `hsl(${chart.data.datasets.length * 70 % 360}, 70%, 50%)`,
-      borderWidth: 1.5,
-      fill: false,
-      tension: 0.4,
-      pointRadius: 0,
-      pointHoverRadius: 0
-    };
-    chart.data.datasets.push(ds);
+      ds = {
+        label: name,
+        data: Array(chart.data.labels.length - 1).fill(0),
+        borderColor: `hsl(${chart.data.datasets.length * 70 % 360}, 70%, 50%)`,
+        borderWidth: 1.5,
+        fill: false,
+        tension: 0.4,
+        pointRadius: 0,
+        pointHoverRadius: 0
+      };
+      chart.data.datasets.push(ds);
     }
-
-    ds.data.push(value);            // add new point
-    if (ds.data.length > sampleCount) ds.data.shift(); // keep fixed length
+    ds.data.push(value);
+    if (ds.data.length > sampleCount) ds.data.shift();
   }
-
-  // shift labels too
-  chart.data.labels.push(chart.data.labels.length);
-  if (chart.data.labels.length > sampleCount) chart.data.labels.shift();
-
-// Keep x-axis labels aligned: -n … 0
-chart.data.labels = Array.from({ length: sampleCount }, (_, i) => i - sampleCount + 1);
-
+  chart.data.labels = Array.from({ length: sampleCount }, (_, i) => i - sampleCount + 1);
   chart.update('none');
 }
 
- async function updateTable() {
+async function updateTable() {
   try {
     const res = await fetch('/dataInfo');
     if (!res.ok) throw new Error("Fetch failed");
     const json = await res.json();
-
     const tbody = document.querySelector('#taskTable tbody');
     tbody.innerHTML = '';
-
-    const stateNames = {
-      0: 'Running',
-      1: 'Ready',
-      2: 'Blocked',
-      3: 'Suspended',
-      4: 'Deleted'
-    };
-
+    const stateNames = { 0: 'Running', 1: 'Ready', 2: 'Blocked', 3: 'Suspended', 4: 'Deleted' };
     for (const [name, info] of Object.entries(json)) {
       const row = document.createElement('tr');
       row.innerHTML = `
@@ -528,17 +480,12 @@ chart.data.labels = Array.from({ length: sampleCount }, (_, i) => i - sampleCoun
     console.error("updateTable error:", e);
   }
 }
-
-
-//window.addEventListener('load', init);
-
-  </script>
+</script>
 </body>
 </html>
 )rawliteral";
 
-  httpd_resp_set_type(req, "text/html");
-  httpd_resp_send(req, html.c_str(), html.length());
+  httpd_resp_send(req, html.c_str(), HTTPD_RESP_USE_STRLEN);
   return ESP_OK;
 }
 
