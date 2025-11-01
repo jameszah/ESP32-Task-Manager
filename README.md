@@ -4,7 +4,7 @@ Display a rolling graph of Task CPU usage inside an ESP32
 - with 2 cores on the esp32-s (on the ai thinker esp32-cam), the percentages will add to 200%
 - it records 100 seconds inside the esp32, but only sends 1-second updates to the graph.
 - you can hit refresh to get the full 100 seconds and get rid of any wifi delays on a 1 second update, such as that wobble if the sinewave of fake load below
-- also below the moving graph is a snapshot of your tasks, priority, heap highwater mark
+- also below the moving graph is a snapshot of your tasks, priority, heap highwater mark, update every 30 seconds
 - the cpu_monitor runs at prio 7 on core 0 (with wifi and arduino housekeeping), then the web server is prio 5, and wifi 23, so tasks above prio 7 can interfere with data collection if they don't let cpu_monitor run
 
 <img  alt="image" src="https://github.com/jameszah/ESP32-Task-Manager/blob/main/taskman4.5.png" />
@@ -24,10 +24,11 @@ https://www.reddit.com/r/esp32/comments/1oeq3v6/whats_happening_inside_my_esp32/
 Your own code needs wifi, and these two lines:
 
 ```
-#include "taskman.h"       //  <--- the important bit
+#define PROGRAM_NAME "replace with program name"
+#include "taskman.h"                           //  <--- the important bit
 
 void setup(){
-  taskman_setup();         //  <--- the important bit
+  taskman_setup();                            //  <--- the important bit
 }
 ```
 And then access the taskmanager display with 192.168.1.111:81 
