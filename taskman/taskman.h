@@ -33,11 +33,10 @@ More info:
 /*
 Your own code needs wifi, and these two lines:
 
-#define PROGRAM_NAME "replace with program name" //   <--- the important bit
-#include "taskman.h"                            //  <--- the important bit
+#include "taskman.h"       //  <--- the important bit
 
 void setup(){
-  taskman_setup();                           //  <--- the important bit
+  taskman_setup();         //  <--- the important bit
 }
 
 And then access the taskmanager display with 192.168.1.111:81 
@@ -50,7 +49,7 @@ Your ip address, and PORT 81
 #include "esp_http_server.h"
 
 #ifndef PROGRAM_NAME
-  #define PROGRAM_NAME "replace with your name"
+#define PROGRAM_NAME "replace with your name"
 #endif
 
 #define SAMPLE_RATE_HZ 1
@@ -165,8 +164,8 @@ void cpuMonitorTask(void* param) {
       //  Filter out absurdly large deltas (corrupted data)
       if (delta > 0x0FFFFFFF) continue;
 
-      uint32_t deltaTask = delta; // t->ulRunTimeCounter - tasks[idx].prevRunTime;
-      tasks[idx].prevRunTime = curr; // t->ulRunTimeCounter;
+      uint32_t deltaTask = delta;     // t->ulRunTimeCounter - tasks[idx].prevRunTime;
+      tasks[idx].prevRunTime = curr;  // t->ulRunTimeCounter;
 
       float usage = (deltaTotal > 0) ? (float)deltaTask / deltaTotal * 100.0f : 0.0f;
       tasks[idx].usage[tasks[idx].index] = usage;
@@ -259,7 +258,7 @@ void FakeLoad0(void* pv) {
 String getProgramName() {
   String path = __FILE__;
   int slash = path.lastIndexOf('/');
-  if (slash < 0) slash = path.lastIndexOf('\\'); // handle Windows
+  if (slash < 0) slash = path.lastIndexOf('\\');  // handle Windows
   int dot = path.lastIndexOf('.');
   if (dot < 0) dot = path.length();
   return path.substring(slash + 1, dot);
@@ -273,9 +272,9 @@ esp_err_t taskman_handleRoot(httpd_req_t* req) {
 <!DOCTYPE html>
 <html>
 <head>
-  <title>ESP32 Task Manager - )rawliteral";
+  <title>)rawliteral";
   html += progName;
-  html += R"rawliteral(</title>
+  html += R"rawliteral( - ESP32 Task Manager</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   
   <style>
