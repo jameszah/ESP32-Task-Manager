@@ -13,6 +13,9 @@ Display a rolling graph of Task CPU usage inside an ESP32
 - taskman_setup() starts the recording so you can put at beginning of setup() to keep track of memory and cpu while the setup is running, and only run taskman_server_setup() later when you have the wifi and the webserver turned on, but you can look backwards 10 or 30 seconds to see how your setup() behaves
 - it can also run at 1 sample per second, or with #define SAMPLE_RATE_HZ, you can change that to 2, 4, or 8 samples per second, still with 100 samples
 - I find the averaging over a 1 second smooths out graphs, as even activity on a 1 second frequency will happen with an 1/8th of a second, so graphs as constantly moving 100% to 0% and back
+- the "Endpoint" stats shown below require you to change your own code to register the Endpoing (like /data) in a different manner, but all the other stuff can be seen without changing your code
+- if uses about 2500 bytes, and never shows up on the graph becuase it is always less the 2% load
+- it will put load on the wifi and httpd tasks when you are looking at it update every second, but you can observe that as well - quite small
 
 <img  alt="image" src="https://github.com/jameszah/ESP32-Task-Manager/blob/main/taskman7.png" />
 <img  alt="image" src="https://github.com/jameszah/ESP32-Task-Manager/blob/main/taskman7net.png" />
