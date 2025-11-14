@@ -1,13 +1,21 @@
 # ESP32-Task-Manager
 Display a rolling graph of Task CPU usage inside an ESP32
-- any Arduino program with wifi, just include the taskman.h, call taskman_setup() in the setup(), and it will serve a graph at port 81 of your ip as below with 100 seconds of 1 second averages of all the tasks above 2% utilization on your esp32
+- any Arduino program with wifi, just include the taskman.h, call taskman_setup() and taskman_server_setup() in the setup(), and it will serve a graph at port 80 or 81 of your ip as below with 100 seconds of 1 second averages of all the tasks above 2% utilization on your esp32
+- you can call taskman_server_setup() and it will setup a webserver you can access at 192.168.1.111:81/taskman
+- OR you can call taskman_server_setup(sever), and it we use your existing httpd server at 192.168.1.111/taskman (saving 10kb or memory)
+- also 192.168.1.111/network gives some internal information about the webserver, sockets, memory, etc (see below)
 - with 2 cores on the esp32-s (on the ai thinker esp32-cam), the percentages will add to 200%
-- it records 100 seconds inside the esp32, but only sends 1-second updates to the graph.
-- you can hit refresh to get the full 100 seconds and get rid of any wifi delays on a 1 second update, such as that wobble if the sinewave of fake load below
+- it records 100 seconds inside the esp32 and updates the web graph every second
 - also below the moving graph is a snapshot of your tasks, priority, heap highwater mark, update every 30 seconds
 - the cpu_monitor runs at prio 7 on core 0 (with wifi and arduino housekeeping), then the web server is prio 5, and wifi 23, so tasks above prio 7 can interfere with data collection if they don't let cpu_monitor run
+- the /dataCurrnet endpoint was removed as the 1 second predictabily of the wifi was a little randon, so now everything is recorded quickly inside the esp32 memory, and you get a full graph every second
+- a second graph was added to keep track of ram and psram
+- taskman_setup() starts the recording so you can put at beginning of setup() to keep track of memory and cpu while the setup is running, and only run taskman_server_setup() later when you have the wifi and the webserver turned on, but you can look backwards 10 or 30 seconds to see how your setup() behaves
+- it can also run at 1 sample per second, or with #define SAMPLE_RATE_HZ, you can change that to 2, 4, or 8 samples per second, still with 100 samples
+- I find the averaging over a 1 second smooths out graphs, as even activity on a 1 second frequency will happen with an 1/8th of a second, so graphs as constantly moving 100% to 0% and back
 
-<img  alt="image" src="https://github.com/jameszah/ESP32-Task-Manager/blob/main/taskman4.5.png" />
+<img  alt="image" src="https://github.com/jameszah/ESP32-Task-Manager/blob/main/taskman7.png" />
+<img  alt="image" src="https://github.com/jameszah/ESP32-Task-Manager/blob/main/taskman7net.png" />
 
 ### Initial Mention
 https://www.reddit.com/r/esp32/comments/1oeq3v6/whats_happening_inside_my_esp32/
@@ -29,10 +37,19 @@ Your own code needs wifi, and these two lines:
 
 void setup(){
   taskman_setup();         //  <--- the important bit
+
+  // Option 1 -- taskman on port 81
+  taskman_server_setup();  //  <--- the important bit
+  
+  // Option 2 - taskman on port 80 along with all your own endpoints
+  httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+  httpd_handle_t mainServer = NULL; 
+  httpd_start(&mainServer, &config);
+  taskman_server_setup(mainServer);  <--- the important bit
 }
 ```
-And then access the taskmanager display with 192.168.1.111:81 
-Your ip address, and PORT 81
+And then access the taskmanager display with 192.168.1.111:81/taskman or 192.168.1.111:80/taskman
+Your ip address, and PORT 81 or 80
 
 ---
 ### Other info
@@ -72,16 +89,6 @@ http://192.168.1.111:81/dataInfo
   }
 }
 
-http://192.168.1.111:81/dataCurrent  
-{
-  "loopTask": 3.1,
-  "IDLE1": 96.6,
-  "IDLE0": 97.8,
-  "BusyTask1": 0,
-  "BusyTask0": 0,
-  "httpd": 0.3,
-  "wifi": 1.4
-}
 
 http://192.168.1.111:81/data  
 {
