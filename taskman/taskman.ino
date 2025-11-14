@@ -109,8 +109,9 @@ void setup() {
 
 void loop() {
 
-  ArduinoOTA.handle();  // just for convienience in testing
+  //ArduinoOTA.handle();  // just for convienience in testing
 
   taskman_fake_loop_load();  // remove for actual use
 
 }
+
